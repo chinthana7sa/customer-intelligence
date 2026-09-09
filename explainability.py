@@ -28,7 +28,7 @@
 #   Used in dashboard_dpgcn.py as an "Explain Prediction" panel.
 # ─────────────────────────────────────────────────────────────
 
-from django.contrib.admin import views
+
 import torch
 import torch.nn.functional as F
 import numpy as np
