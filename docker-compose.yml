@@ -1,0 +1,141 @@
+version: "3.8"
+
+# ─────────────────────────────────────────────────────────────
+#  Customer Intelligence Platform — Streaming Infrastructure
+#  Services: Zookeeper → Kafka → RisingWave
+#  Run:  docker-compose up -d
+#  Stop: docker-compose down
+# ─────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Zookeeper (Kafka requires this for coordination) ────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: cip_zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cip_net
+
+  # ── Kafka broker ────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: cip_kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Internal port (container-to-container): 29092
+      # External port (host machine):           9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_SEGMENT_BYTES: 10485760
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks:
+      - cip_net
+
+  # ── Kafka topic initialiser (creates topic on startup) ──────
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: cip_kafka_init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "kafka-topics --bootstrap-server kafka:29092
+        --create --if-not-exists
+        --topic user_behavior_topic
+        --partitions 3
+        --replication-factor 1 &&
+       echo '✅ Topic user_behavior_topic created'"
+    networks:
+      - cip_net
+    restart: on-failure
+
+  # ── RisingWave (streaming SQL engine) ───────────────────────
+  risingwave:
+    image: risingwavelabs/risingwave:v1.5.0
+    container_name: cip_risingwave
+    command: playground
+    ports:
+      - "4566:4566"   # SQL port (PostgreSQL wire protocol)
+      - "5691:5691"   # Dashboard / metrics port
+    environment:
+      RUST_LOG: info
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "4566", "-U", "root"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks:
+      - cip_net
+
+  # ── Kafka UI (optional — view topics in browser) ────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: cip_kafka_ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    ports:
+      - "8080:8080"
+    networks:
+      - cip_net
+
+networks:
+  cip_net:
+    driver: bridge
+
+# ─────────────────────────────────────────────────────────────
+# USAGE GUIDE
+# ─────────────────────────────────────────────────────────────
+# 1. Start all services:
+#       docker-compose up -d
+#
+# 2. Verify everything is running:
+#       docker-compose ps
+#
+# 3. Watch Kafka topic messages live:
+#       docker exec -it cip_kafka kafka-console-consumer \
+#         --bootstrap-server localhost:9092 \
+#         --topic user_behavior_topic --from-beginning
+#
+# 4. Connect to RisingWave SQL shell:
+#       psql -h localhost -p 4566 -U root -d dev
+#
+# 5. Open Kafka UI in browser:
+#       http://localhost:8080
+#
+# 6. Tear down:
+#       docker-compose down
+#       docker-compose down -v   (also deletes volumes)
+# ─────────────────────────────────────────────────────────────

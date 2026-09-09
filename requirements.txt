@@ -1,0 +1,21 @@
+# Core app
+streamlit
+pandas
+numpy
+openpyxl        # needed for .xlsx uploads on the landing screen
+
+# DP-GCN model
+torch
+torch-geometric
+scikit-learn
+networkx
+
+# Dashboard viz
+plotly
+
+# Real-time synthetic event streaming (TVAE)
+sdv
+
+# Optional: only needed if you still run data_generator.py / setup_db.py
+# standalone to (re)build the bundled sample customer_data.db
+# faker
